@@ -10,7 +10,8 @@ const SUPPORT_URL = 'https://ko-fi.com/chrispecoraro';
 const PEAKS_PER_SEC = 400;                    // waveform resolution (min/max pairs per second)
 const DECODE_RATE = 8000;                     // decode at low rate: fast, low memory, plenty for peaks
 const AUTO_DECODE_MAX = 200 * 1024 * 1024;    // above this, ask before decoding
-const LS_PREFIX = 'videolearner:';
+const LS_PREFIX = 'theshed:';
+const LEGACY_PREFIX = 'videolearner:';         // keys saved under the app's old name
 const FRAME = 1 / 30;
 
 /* ---------- elements ---------- */
@@ -557,6 +558,20 @@ function restoreDoc(){
   if (typeof d.t === 'number' && d.t < S.duration - 0.5) media.currentTime = d.t;
   renderLoops(); renderLoopFields();
 }
+/* one-time: carry sections saved under the old app name over to the new prefix */
+function migrateLegacyKeys(){
+  const old = [];
+  for (let i = 0; i < localStorage.length; i++){
+    const k = localStorage.key(i);
+    if (k && k.indexOf(LEGACY_PREFIX) === 0) old.push(k);
+  }
+  old.forEach(k => {
+    const nk = LS_PREFIX + k.slice(LEGACY_PREFIX.length);
+    if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+    localStorage.removeItem(k);
+  });
+}
+
 function exportAll(){
   const out = {};
   for (let i = 0; i < localStorage.length; i++){
@@ -565,11 +580,11 @@ function exportAll(){
       try { out[k] = JSON.parse(localStorage.getItem(k)); } catch (e) {}
     }
   }
-  const blob = new Blob([JSON.stringify({ app:'video-learner', version:1, data:out }, null, 2)],
+  const blob = new Blob([JSON.stringify({ app:'the-shed', version:1, data:out }, null, 2)],
     { type:'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'video-learner-sections.json';
+  a.download = 'the-shed-sections.json';
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
@@ -579,6 +594,8 @@ async function importAll(file){
     if (!j || !j.data) throw new Error('bad file');
     Object.keys(j.data).forEach(k => {
       if (k.indexOf(LS_PREFIX) === 0) localStorage.setItem(k, JSON.stringify(j.data[k]));
+      else if (k.indexOf(LEGACY_PREFIX) === 0)
+        localStorage.setItem(LS_PREFIX + k.slice(LEGACY_PREFIX.length), JSON.stringify(j.data[k]));
     });
     if (S.key) restoreDoc();
     alert('Sections imported.');
@@ -697,11 +714,12 @@ if (SUPPORT_URL){
     if (wrap) wrap.hidden = false;
   });
 } else {
-  console.info('Video Learner: set SUPPORT_URL at the top of app.js to show the "buy me a coffee" links.');
+  console.info('The Shed: set SUPPORT_URL at the top of app.js to show the "buy me a coffee" links.');
 }
 
+migrateLegacyKeys();
 renderLoops(); renderLoopFields(); draw();
 
-/* debug handle (console: VL.state, VL.loadFile(file), ...) */
-window.VL = { state:S, media, loadFile, setA, setB, applySpeed, recallLoop, saveLoop, zoomLoop, zoomFull };
+/* debug handle (console: SHED.state, SHED.loadFile(file), ...) */
+window.SHED = { state:S, media, loadFile, setA, setB, applySpeed, recallLoop, saveLoop, zoomLoop, zoomFull };
 })();

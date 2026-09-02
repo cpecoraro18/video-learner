@@ -1,4 +1,4 @@
-# Video Learner
+# The Shed
 
 A practice tool for learning parts of audio/video recordings by ear: slow a passage down
 without changing its pitch, loop it, and drill it until it sticks.
