@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="The Shed">
+  <!-- palette taken from styles.css: the panel tone for the tile, the accent for the bars.
+       Three thick bars rather than a denser waveform: anything finer turns to mush at 16px. -->
+  <rect width="32" height="32" rx="7" fill="#161b23"/>
+  <g fill="#4cc2ff">
+    <rect x="4"  y="10" width="6" height="12" rx="3"/>
+    <rect x="13" y="4"  width="6" height="24" rx="3"/>
+    <rect x="22" y="8"  width="6" height="16" rx="3"/>
+  </g>
+</svg>
