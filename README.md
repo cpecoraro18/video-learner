@@ -65,3 +65,7 @@ moving to another browser or machine.
   WAV, FLAC, OGG, Opus, MP4, MOV, WebM. MKV and some AVI files won't play.
 - Saved sections live in this browser's local storage, keyed by file name + size.
   Use **Export** if you want them backed up.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Use it, fork it, ship it.
