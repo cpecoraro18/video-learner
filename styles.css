@@ -124,3 +124,22 @@ input[type=range].short{width:90px}
 .modal-card h2{margin:0 0 12px;font-size:15px}
 .keys{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;margin-bottom:14px;font-size:12.5px;color:var(--dim)}
 .keys div{color:var(--text)}
+
+/* youtube */
+.urlbox{display:flex;gap:4px;align-items:center}
+.urlbox input{
+  background:var(--bg);color:var(--text);border:1px solid var(--line);
+  border-radius:var(--radius);padding:5px 9px;font:inherit;width:210px;
+}
+.urlbox input:focus{outline:none;border-color:var(--accent)}
+.urlbox input::placeholder{color:var(--dim)}
+.ytwrap{display:none;flex:1 1 auto;align-self:stretch;width:100%;height:100%;background:#000}
+body.has-yt .ytwrap,body.yt-loading .ytwrap{display:block}
+.ytwrap iframe{display:block;width:100%;height:100%;border:0}
+body.has-yt #media,body.has-yt .audio-card{display:none}
+.dz-err{margin-top:12px;color:var(--accent2);font-size:12px;max-width:34em}
+.ratenote{color:var(--dim);font-size:12px}
+.presets[hidden]{display:none}
+/* the slider is meaningless when the source only offers a fixed set of rates */
+#speed[hidden]{display:none}
+.keys-note{grid-column:1/-1;color:var(--dim);font-size:12px;line-height:1.5;margin-top:6px;border-top:1px solid var(--line);padding-top:10px}

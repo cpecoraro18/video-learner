@@ -12,6 +12,10 @@
   <div class="brand">The&nbsp;Shed</div>
   <div class="filename" id="filename">No file loaded</div>
   <div class="spacer"></div>
+  <div class="urlbox">
+    <input type="url" id="urlInput" placeholder="paste a YouTube link" spellcheck="false" autocomplete="off">
+    <button class="btn" id="urlBtn">Load</button>
+  </div>
   <a class="btn coffee" data-support hidden target="_blank" rel="noopener noreferrer">☕ Buy me a coffee</a>
   <button class="btn" id="openBtn">Open file…</button>
   <button class="btn ghost" id="helpBtn" title="Keyboard shortcuts (?)">?</button>
@@ -22,6 +26,7 @@
 
   <section class="stage" id="stage">
     <video id="media" playsinline></video>
+    <div class="ytwrap" id="ytwrap"><div id="ytplayer"></div></div>
     <div class="audio-card" id="audioCard">
       <div class="audio-title" id="audioTitle">—</div>
       <div class="audio-time" id="audioTime">0:00.000</div>
@@ -29,8 +34,11 @@
     <div class="dropzone" id="dropzone">
       <div class="dz-inner">
         <div class="dz-big">Drop an audio or video file here</div>
-        <div class="dz-sub">or <button class="btn" id="dzOpen">choose a file</button></div>
-        <div class="dz-note">Everything stays on your machine — nothing is uploaded.</div>
+        <div class="dz-sub">or <button class="btn" id="dzOpen">choose a file</button>,
+          or paste a YouTube link in the bar above</div>
+        <div class="dz-note">Local files stay on your machine — nothing is uploaded.
+          A YouTube link plays through YouTube&rsquo;s own embedded player.</div>
+        <div class="dz-err" id="loadMsg" hidden></div>
         <div class="dz-note dz-support" hidden>Free, no account, no ads. If it helps your practice,
           <a data-support target="_blank" rel="noopener noreferrer">buy me a coffee ☕</a></div>
       </div>
@@ -52,14 +60,16 @@
       <label class="lbl">Speed</label>
       <input type="range" id="speed" min="20" max="200" step="1" value="100">
       <output id="speedOut">100%</output>
-      <div class="presets">
+      <div class="presets" id="filePresets">
         <button class="btn tiny" data-speed="50">50</button>
         <button class="btn tiny" data-speed="65">65</button>
         <button class="btn tiny" data-speed="75">75</button>
         <button class="btn tiny" data-speed="85">85</button>
         <button class="btn tiny" data-speed="100">100</button>
       </div>
+      <div class="presets" id="rateList" hidden></div>
       <label class="check" title="Keep the original pitch when slowing down"><input type="checkbox" id="pitch" checked> keep pitch</label>
+      <span class="ratenote" id="pitchNote" hidden title="YouTube preserves pitch itself and offers no way to switch it off">always on for YouTube</span>
     </div>
 
     <div class="group">
@@ -141,7 +151,7 @@
         <button class="btn tiny ghost" id="importBtn">Import…</button>
         <input type="file" id="importInput" accept="application/json,.json" hidden>
       </div>
-      <div class="row hint">Sections are saved in this browser, per file.</div>
+      <div class="row hint">Sections are saved in this browser &mdash; per file, or per YouTube video.</div>
     </div>
 
   </section>
@@ -167,6 +177,9 @@
       <div><span class="key">M</span> mute</div>
       <div><span class="key">1</span>–<span class="key">9</span> recall saved section</div>
       <div><span class="key">?</span> this help</div>
+      <div class="keys-note">With a YouTube video, speed snaps to the rates YouTube allows and pitch is
+        always preserved. Clicking inside the player hands it the keyboard &mdash; click the waveform to get
+        the shortcuts back.</div>
     </div>
     <button class="btn" id="helpClose">Close</button>
   </div>

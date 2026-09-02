@@ -6,6 +6,10 @@
    While it is empty the support links stay hidden, so nothing ships as a dead link. */
 const SUPPORT_URL = 'https://ko-fi.com/chrispecoraro';
 
+/* Google Analytics 4 measurement ID, e.g. 'G-ABC1234XYZ'.
+   While it is empty no tracking script is loaded at all. */
+const GA_MEASUREMENT_ID = '';
+
 /* ---------- constants ---------- */
 const PEAKS_PER_SEC = 400;                    // waveform resolution (min/max pairs per second)
 const DECODE_RATE = 8000;                     // decode at low rate: fast, low memory, plenty for peaks
@@ -13,6 +17,8 @@ const AUTO_DECODE_MAX = 200 * 1024 * 1024;    // above this, ask before decoding
 const LS_PREFIX = 'theshed:';
 const LEGACY_PREFIX = 'videolearner:';         // keys saved under the app's old name
 const FRAME = 1 / 30;
+const FILE_LOOP_GUARD = 0.012;                // a media element reports its clock every frame
+const YT_LOOP_GUARD = 0.08;                   // the YouTube embed reports it a few times a second
 
 /* ---------- elements ---------- */
 const $ = s => document.querySelector(s);
@@ -28,11 +34,15 @@ const el = {
   reps:$('#reps'), rampOn:$('#rampOn'), rampStart:$('#rampStart'), rampStep:$('#rampStep'),
   rampEvery:$('#rampEvery'), rampMax:$('#rampMax'), rest:$('#rest'),
   loopList:$('#loopList'), loopCount:$('#loopCount'), help:$('#help'),
+  urlInput:$('#urlInput'), loadMsg:$('#loadMsg'),
+  filePresets:$('#filePresets'), rateList:$('#rateList'), pitchNote:$('#pitchNote'),
 };
 
 /* ---------- state ---------- */
 const S = {
   file:null, key:null, url:null, duration:0,
+  title:'', loaded:false,
+  wrapping:false, wrapAt:0,     // loop-wrap latch: seeks are async on YouTube
   peaks:null,                 // {min:Float32Array, max:Float32Array, pps:number}
   viewStart:0, viewSpan:0,    // visible time window
   a:null, b:null,
@@ -56,53 +66,301 @@ function fmtShort(t){
   return m + ':' + s.toFixed(1).padStart(4, '0');
 }
 
-/* ---------- file loading ---------- */
-function loadFile(file){
-  if (!file) return;
-  if (S.url) URL.revokeObjectURL(S.url);
-  stopRest();
+/* ---------- source adapter ----------
+   Everything downstream talks to `src` and never to a concrete player, so the
+   transport, the loop engine and the saved sections all drive either a local
+   file or a YouTube embed. The two differ in what they can actually honour:
 
-  S.file = file;
-  S.key = LS_PREFIX + file.name + '::' + file.size;
-  S.url = URL.createObjectURL(file);
-  S.peaks = null; S.a = null; S.b = null; S.reps = 0; S.activeLoop = null; S.loops = [];
+     file     any rate from 20-200%, optional pitch preservation, real waveform
+     youtube  only the rates YouTube reports, pitch always preserved, no waveform
 
+   Each implementation exposes the same shape and reports player events through
+   onSourceReady / onSourcePlay / onSourcePause / onSourceEnded. */
+let src = null;
+
+function makeFileSource(){
   media.src = S.url;
   media.load();
+  return {
+    kind:'file',
+    rates:null,                                        // continuous - use the slider
+    get currentTime(){ return media.currentTime; },
+    set currentTime(t){ media.currentTime = t; },
+    get paused(){ return media.paused; },
+    get duration(){ return isFinite(media.duration) ? media.duration : 0; },
+    play(){ const p = media.play(); return p && p.catch ? p : Promise.resolve(); },
+    pause(){ media.pause(); },
+    set playbackRate(r){ media.playbackRate = r; },
+    setPitchPreserved(on){
+      media.preservesPitch = on;
+      media.mozPreservesPitch = on;
+      media.webkitPreservesPitch = on;
+    },
+    set volume(v){ media.volume = v; },
+    get muted(){ return media.muted; },
+    set muted(m){ media.muted = m; },
+    isVideo(){ return media.videoWidth > 0; },
+    title(){ return S.file ? S.file.name : ''; },
+    destroy(){ media.pause(); media.removeAttribute('src'); media.load(); },
+  };
+}
 
-  el.filename.textContent = file.name;
-  el.audioTitle.textContent = file.name;
+media.addEventListener('loadedmetadata', () => { if (src && src.kind === 'file') onSourceReady(0); });
+media.addEventListener('error', () => {
+  if (src && src.kind === 'file')
+    setLoadMsg('This browser could not play that file (unsupported codec or container).');
+});
+media.addEventListener('play',  () => { if (src && src.kind === 'file') onSourcePlay(); });
+media.addEventListener('pause', () => { if (src && src.kind === 'file') onSourcePause(); });
+media.addEventListener('ended', () => { if (src && src.kind === 'file') onSourceEnded(); });
+
+/* ---------- YouTube ---------- */
+const YT_ENDED = 0, YT_PLAYING = 1, YT_PAUSED = 2, YT_BUFFERING = 3;
+const YT_FALLBACK_RATES = [25, 50, 75, 100, 125, 150, 175, 200];
+let ytApi = null, ytPlayer = null, ytError = '';
+
+/* watch?v=ID | youtu.be/ID | /embed|shorts|live|v/ID | a bare 11-character id,
+   honouring a ?t= / &start= start offset in any of the usual spellings */
+function parseYouTube(text){
+  const s = String(text || '').trim();
+  if (!s) return null;
+  if (/^[\w-]{11}$/.test(s)) return { id:s, t:0 };
+  let u;
+  try {
+    u = new URL(/^https?:\/\//i.test(s) ? s : 'https://' + s.replace(/^\/\//, ''));
+  } catch (e){ return null; }
+  const host = u.hostname.replace(/^(?:www|m)\./, '');
+  let id = null;
+  if (host === 'youtu.be'){
+    id = u.pathname.slice(1).split('/')[0];
+  } else if (host === 'youtube.com' || host === 'youtube-nocookie.com'){
+    if (u.pathname === '/watch') id = u.searchParams.get('v');
+    else {
+      const m = u.pathname.match(/^\/(?:embed|shorts|live|v)\/([\w-]{11})/);
+      if (m) id = m[1];
+    }
+  }
+  if (!id || !/^[\w-]{11}$/.test(id)) return null;
+  const raw = u.searchParams.get('t') || u.searchParams.get('start') || u.hash.replace(/^#t?=?/, '');
+  return { id, t: parseStart(raw) };
+}
+function parseStart(v){
+  const m = String(v || '').match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/i);
+  return m ? (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0) : 0;
+}
+
+function loadYouTubeApi(){
+  if (ytApi) return ytApi;
+  ytApi = new Promise((resolve, reject) => {
+    if (window.YT && window.YT.Player) return resolve(window.YT);
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      if (typeof prev === 'function') prev();
+      resolve(window.YT);
+    };
+    const tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    tag.async = true;
+    tag.onerror = () => reject(new Error('Could not reach YouTube - check the connection, or an ad blocker.'));
+    document.head.appendChild(tag);
+    setTimeout(() => reject(new Error('The YouTube player did not load in time.')), 15000);
+  }).catch(err => { ytApi = null; throw err; });   // leave a later attempt free to retry
+  return ytApi;
+}
+
+function makeYouTubePlayer(){
+  return new Promise(resolve => {
+    const opts = {
+      host: 'https://www.youtube-nocookie.com',
+      width: '100%', height: '100%',
+      playerVars: { enablejsapi:1, rel:0, modestbranding:1, playsinline:1, controls:1 },
+      events: {
+        onReady: () => resolve(),
+        onStateChange: onYtState,
+        onPlaybackRateChange: onYtRate,
+        onError: e => { ytError = ytErrorText(e.data); },
+      },
+    };
+    // an origin of "null" (a file:// page) makes the API refuse to talk back
+    if (/^https?:$/.test(location.protocol)) opts.playerVars.origin = location.origin;
+    ytPlayer = new YT.Player('ytplayer', opts);
+  });
+}
+
+function onYtState(e){
+  if (!src || src.kind !== 'youtube') return;
+  if (e.data === YT_PLAYING) onSourcePlay();
+  else if (e.data === YT_PAUSED) onSourcePause();
+  else if (e.data === YT_ENDED) onSourceEnded();
+}
+/* the embed keeps its own speed menu; keep our readout honest when it is used */
+function onYtRate(e){
+  if (!src || src.kind !== 'youtube') return;
+  const pct = Math.round(e.data * 100);
+  el.speed.value = clamp(pct, 20, 200);
+  el.speedOut.textContent = pct + '%';
+  markActiveRate();
+}
+function ytErrorText(code){
+  if (code === 101 || code === 150) return 'The uploader does not allow this video in embeds. Only a different upload of it will work.';
+  if (code === 100) return 'That video is private, age-restricted, or no longer exists.';
+  if (code === 2)   return 'That video id is not valid.';
+  return 'YouTube could not play that video.';
+}
+
+function makeYouTubeSource(id){
+  const p = ytPlayer;
+  let cached = null;
+  return {
+    kind:'youtube', id,
+    // a freshly cued video reports a short list until it has loaded, so read it
+    // live and keep the longest one seen rather than snapshotting at cue time
+    get rates(){
+      const raw = (p.getAvailablePlaybackRates && p.getAvailablePlaybackRates()) || [];
+      const pct = raw.map(r => Math.round(r * 100)).filter(r => r >= 20 && r <= 200);
+      if (pct.length > 1) cached = pct.sort((a, b) => a - b);
+      return cached || YT_FALLBACK_RATES;
+    },
+    get currentTime(){ return p.getCurrentTime() || 0; },
+    set currentTime(t){ p.seekTo(t, true); },
+    get paused(){ const st = p.getPlayerState(); return st !== YT_PLAYING && st !== YT_BUFFERING; },
+    get duration(){ return p.getDuration() || 0; },
+    play(){ p.playVideo(); return Promise.resolve(); },
+    pause(){ p.pauseVideo(); },
+    set playbackRate(r){ p.setPlaybackRate(r); },
+    setPitchPreserved(){ /* YouTube always preserves pitch; there is no switch */ },
+    set volume(v){ p.setVolume(Math.round(v * 100)); },
+    get muted(){ return p.isMuted(); },
+    set muted(m){ m ? p.mute() : p.unMute(); },
+    isVideo(){ return true; },
+    title(){ const d = p.getVideoData && p.getVideoData(); return (d && d.title) || ('YouTube ' + id); },
+    destroy(){ try { p.stopVideo(); } catch (e){} },
+  };
+}
+
+function waitFor(test, ms){
+  return new Promise(resolve => {
+    const t0 = Date.now();
+    (function poll(){
+      if (test()) return resolve(true);
+      if (Date.now() - t0 > ms) return resolve(false);
+      setTimeout(poll, 100);
+    })();
+  });
+}
+
+/* ---------- loading ---------- */
+function setLoadMsg(msg){
+  el.waveStatus.textContent = msg || '';
+  el.loadMsg.textContent = msg || '';
+  el.loadMsg.hidden = !msg;
+}
+function resetDoc(){
+  stopRest();
+  S.peaks = null; S.a = null; S.b = null; S.reps = 0; S.activeLoop = null; S.loops = [];
+  S.loaded = false; S.duration = 0; S.wrapping = false;
   el.reps.textContent = '0';
-  document.body.classList.add('has-file');
-  el.waveStatus.textContent = '';
   el.decodeBtn.hidden = true;
+  setLoadMsg('');
   renderLoops(); renderLoopFields();
 }
 
-media.addEventListener('loadedmetadata', () => {
-  S.duration = isFinite(media.duration) ? media.duration : 0;
+function loadFile(file){
+  if (!file) return;
+  if (S.url) URL.revokeObjectURL(S.url);
+  const prev = src; src = null;
+  if (prev) prev.destroy();       // null first: its teardown events are not ours any more
+  resetDoc();
+
+  S.file = file;
+  S.title = file.name;
+  S.key = LS_PREFIX + file.name + '::' + file.size;
+  S.url = URL.createObjectURL(file);
+
+  el.urlInput.value = '';
+  el.filename.textContent = file.name;
+  el.audioTitle.textContent = file.name;
+  document.body.classList.remove('has-yt', 'yt-loading');
+  document.body.classList.add('has-file');
+
+  src = makeFileSource();
+  syncSpeedUI();
+}
+
+async function loadYouTube(input){
+  const info = parseYouTube(input);
+  if (!info){ setLoadMsg('That does not look like a YouTube link.'); return; }
+  if (location.protocol === 'file:'){
+    setLoadMsg('YouTube needs this page served over http(s) - use the hosted copy, or run a local server. Local files still work here.');
+    return;
+  }
+
+  const prev = src; src = null;
+  if (prev) prev.destroy();
+  if (S.url){ URL.revokeObjectURL(S.url); S.url = null; }
+  S.file = null;
+  resetDoc();
+  document.body.classList.add('yt-loading');
+  setLoadMsg('Loading the YouTube player...');
+
+  try {
+    await loadYouTubeApi();
+    if (!ytPlayer) await makeYouTubePlayer();
+  } catch (err){
+    document.body.classList.remove('yt-loading');
+    setLoadMsg(err.message || 'Could not load the YouTube player.');
+    return;
+  }
+
+  ytError = '';
+  ytPlayer.cueVideoById({ videoId: info.id, startSeconds: info.t || 0 });
+  src = makeYouTubeSource(info.id);
+  S.key = LS_PREFIX + 'yt::' + info.id;
+  S.title = 'YouTube ' + info.id;
+  syncSpeedUI();
+
+  // there is no metadata event on an embed - the duration simply turns up
+  const ok = await waitFor(() => !!ytError || src.duration > 0, 15000);
+  document.body.classList.remove('yt-loading');
+  if (ytError){ setLoadMsg(ytError); return; }
+  if (!ok){ setLoadMsg('That video did not load. It may be private, removed, or blocked from embedding.'); return; }
+
+  S.title = src.title();
+  el.urlInput.value = 'https://youtu.be/' + info.id;
+  document.body.classList.add('has-file', 'has-yt');
+  onSourceReady(info.t || 0);
+}
+
+/* shared by both sources: the media is playable and its duration is known */
+function onSourceReady(seekTo){
+  S.duration = src.duration;
+  S.loaded = true;
   S.viewStart = 0; S.viewSpan = S.duration || 1;
   el.durTime.textContent = fmt(S.duration);
 
-  const isVideo = media.videoWidth > 0;
+  const isVideo = src.isVideo();
   document.body.classList.toggle('has-video', isVideo);
   document.body.classList.toggle('has-audio', !isVideo);
+  el.filename.textContent = S.title;
+  el.audioTitle.textContent = S.title;
 
+  syncSpeedUI();
   applySpeed(+el.speed.value);
-  media.volume = +el.volume.value / 100;
+  src.volume = +el.volume.value / 100;
   restoreDoc();
+  if (seekTo) seek(seekTo);          // a ?t= in the link beats the remembered position
   draw();
 
-  if (S.file.size <= AUTO_DECODE_MAX) decodeWaveform();
-  else {
+  if (src.kind === 'youtube'){
+    setLoadMsg('');
+    el.waveStatus.textContent = 'No waveform for YouTube - its audio is out of reach. The timeline still works.';
+  } else if (S.file.size <= AUTO_DECODE_MAX){
+    decodeWaveform();
+  } else {
     el.waveStatus.textContent = 'Large file - waveform not generated automatically.';
     el.decodeBtn.hidden = false;
   }
-});
-
-media.addEventListener('error', () => {
-  el.waveStatus.textContent = 'This browser could not play that file (unsupported codec or container).';
-});
+}
 
 /* ---------- waveform decoding ---------- */
 async function decodeWaveform(){
@@ -247,7 +505,7 @@ function draw(){
   if (S.b != null) marker(S.b, '#ffb454', 'B');
 
   // playhead
-  const px = Math.round(tToX(media.currentTime, w)) + 0.5;
+  const px = Math.round(tToX(src.currentTime, w)) + 0.5;
   wctx.strokeStyle = '#ffffff'; wctx.lineWidth = 1.5;
   wctx.beginPath(); wctx.moveTo(px, 0); wctx.lineTo(px, h); wctx.stroke();
 }
@@ -267,8 +525,8 @@ function zoomLoop(){
   const pad = (S.b - S.a) * 0.25;
   setView(S.a - pad, (S.b - S.a) + pad * 2);
 }
-function keepPlayheadVisible(){
-  const t = media.currentTime;
+function keepPlayheadVisible(t){
+  if (t == null) t = src.currentTime;
   if (t < S.viewStart || t > S.viewStart + S.viewSpan) setView(t - S.viewSpan / 2, S.viewSpan);
 }
 
@@ -329,7 +587,7 @@ function endDrag(e){
     seek(clamp(xToT(e.offsetX, w), 0, S.duration));
   } else {
     S.reps = 0; el.reps.textContent = '0';
-    if (S.a != null && S.b != null && (media.currentTime < S.a || media.currentTime > S.b)) seek(S.a);
+    if (S.a != null && S.b != null && (src.currentTime < S.a || src.currentTime > S.b)) seek(S.a);
     renderLoops();
   }
   persist(); renderLoopFields(); draw();
@@ -339,42 +597,101 @@ wave.addEventListener('pointercancel', () => { S.drag = null; });
 wave.addEventListener('dblclick', () => { if (S.a != null && S.b != null) zoomLoop(); else zoomFull(); });
 
 /* ---------- transport ---------- */
+function loopGuard(){
+  // the YouTube player only reports its clock a few times a second, so the wrap
+  // point has to be a good deal looser than it is for a local media element
+  return src && src.kind === 'youtube' ? YT_LOOP_GUARD : FILE_LOOP_GUARD;
+}
 function togglePlay(){
-  if (!S.file) return;
-  if (media.paused){
+  if (!S.loaded) return;
+  if (src.paused){
     stopRest();
-    if (S.a != null && S.b != null && media.currentTime >= S.b - 0.01) media.currentTime = S.a;
-    media.play().catch(() => {});
+    if (S.a != null && S.b != null && src.currentTime >= S.b - loopGuard()) src.currentTime = S.a;
+    src.play().catch(() => {});
   } else {
     stopRest();
-    media.pause();
+    src.pause();
   }
 }
 function seek(t){
-  media.currentTime = clamp(t, 0, S.duration || 0);
+  if (!src) return;
+  src.currentTime = clamp(t, 0, S.duration || 0);
   updateTimeUI();
   draw();
 }
-media.addEventListener('play',  () => { el.playBtn.textContent = '❚❚'; });
-media.addEventListener('pause', () => { el.playBtn.textContent = '▶'; draw(); });
-// a loop ending at the very end of the file: 'ended' fires before tick()'s wrap check can run
-media.addEventListener('ended', () => {
+
+/* the source implementations funnel their player events through these */
+function onSourcePlay(){ el.playBtn.textContent = '❚❚'; }
+function onSourcePause(){ el.playBtn.textContent = '▶'; draw(); }
+// a loop ending at the very end of the media: 'ended' fires before tick()'s wrap check can run
+function onSourceEnded(){
   if (el.loopOn.checked && S.a != null && S.b != null && S.b > S.a){
     onRepComplete();
-    if (!S.resting) media.play().catch(() => {});
+    if (!S.resting) src.play().catch(() => {});
   }
-});
-
-function applySpeed(pct){
-  const r = clamp(pct, 20, 200) / 100;
-  media.playbackRate = r;
-  media.preservesPitch = el.pitch.checked;
-  media.mozPreservesPitch = el.pitch.checked;
-  media.webkitPreservesPitch = el.pitch.checked;
-  el.speed.value = Math.round(clamp(pct, 20, 200));
-  el.speedOut.textContent = Math.round(clamp(pct, 20, 200)) + '%';
 }
-function nudgeSpeed(d){ applySpeed(+el.speed.value + d); persist(); }
+
+/* ---------- speed ----------
+   A local file plays at any rate; YouTube only honours the handful of rates it
+   reports, so every speed change is snapped onto whatever the source allows and
+   the UI shows the rate that actually took effect. */
+function nearestRate(pct){
+  if (!src || !src.rates) return clamp(pct, 20, 200);
+  let best = src.rates[0];
+  for (let i = 1; i < src.rates.length; i++){
+    if (Math.abs(src.rates[i] - pct) < Math.abs(best - pct)) best = src.rates[i];
+  }
+  return best;
+}
+function applySpeed(pct){
+  const want = nearestRate(clamp(pct, 20, 200));
+  if (src){
+    src.playbackRate = want / 100;
+    src.setPitchPreserved(el.pitch.checked);
+  }
+  el.speed.value = Math.round(want);
+  el.speedOut.textContent = Math.round(want) + '%';
+  markActiveRate();
+}
+function stepSpeed(dir, fine){
+  if (src && src.rates){
+    const rs = src.rates;
+    let i = rs.indexOf(nearestRate(+el.speed.value));
+    if (i < 0) i = 0;
+    applySpeed(rs[clamp(i + (dir > 0 ? 1 : -1), 0, rs.length - 1)]);
+  } else {
+    applySpeed(+el.speed.value + dir * (fine ? 1 : 5));
+  }
+  persist();
+}
+/* swap the continuous slider for the source's fixed rates, and vice versa */
+function syncSpeedUI(){
+  const fixed = !!(src && src.rates);
+  el.speed.hidden = fixed;
+  el.filePresets.hidden = fixed;
+  el.rateList.hidden = !fixed;
+  el.pitch.disabled = fixed;
+  el.pitchNote.hidden = !fixed;
+  if (fixed){
+    el.pitch.checked = true;          // YouTube always preserves pitch, and won't be talked out of it
+    el.rateList.innerHTML = '';
+    src.rates.forEach(r => {
+      const b = document.createElement('button');
+      b.className = 'btn tiny';
+      b.dataset.rate = r;
+      b.textContent = r;
+      b.onclick = () => { applySpeed(r); persist(); };
+      el.rateList.appendChild(b);
+    });
+  }
+  markActiveRate();
+}
+function markActiveRate(){
+  const cur = Math.round(+el.speed.value);
+  el.rateList.querySelectorAll('[data-rate]').forEach(b => {
+    b.classList.toggle('on', +b.dataset.rate === cur);
+  });
+}
 
 /* ---------- loop engine ---------- */
 function stopRest(){
@@ -384,38 +701,45 @@ function stopRest(){
 function onRepComplete(){
   S.reps++;
   el.reps.textContent = S.reps;
+  // seeking is asynchronous on the YouTube player, so latch until the playhead
+  // has actually gone back past B - otherwise one lap counts as several reps
+  S.wrapping = true; S.wrapAt = Date.now();
   if (el.rampOn.checked){
     const start = +el.rampStart.value, step = +el.rampStep.value;
     const every = Math.max(1, +el.rampEvery.value), max = +el.rampMax.value;
     applySpeed(Math.min(max, start + step * Math.floor(S.reps / every)));
   }
   const rest = +el.rest.value;
-  media.currentTime = S.a;
+  src.currentTime = S.a;
   if (rest > 0){
     S.resting = true;
-    media.pause();
+    src.pause();
     S.restTimer = setTimeout(() => {
       S.restTimer = null; S.resting = false;
-      media.play().catch(() => {});
+      src.play().catch(() => {});
     }, rest * 1000);
   }
 }
 
 function tick(){
   requestAnimationFrame(tick);
-  if (!S.file) return;
-  if (el.loopOn.checked && !S.resting && !media.paused &&
-      S.a != null && S.b != null && S.b > S.a && media.currentTime >= S.b - 0.012){
+  if (!S.loaded) return;
+  const t = src.currentTime;
+  const guard = loopGuard();
+  if (S.wrapping && (S.b == null || t < S.b - guard || Date.now() - S.wrapAt > 1500)) S.wrapping = false;
+  if (el.loopOn.checked && !S.resting && !S.wrapping && !src.paused &&
+      S.a != null && S.b != null && S.b > S.a && t >= S.b - guard){
     onRepComplete();
   }
-  if (media.paused) return;   // paused frames are drawn on demand by seek/setA/setB/setView
-  updateTimeUI();
-  if (!S.drag) keepPlayheadVisible();
+  if (src.paused) return;   // paused frames are drawn on demand by seek/setA/setB/setView
+  updateTimeUI(t);
+  if (!S.drag) keepPlayheadVisible(t);
   draw();
 }
-function updateTimeUI(){
-  el.curTime.textContent = fmt(media.currentTime);
-  el.audioTime.textContent = fmt(media.currentTime);
+function updateTimeUI(t){
+  if (t == null) t = src ? src.currentTime : 0;
+  el.curTime.textContent = fmt(t);
+  el.audioTime.textContent = fmt(t);
 }
 requestAnimationFrame(tick);
 
@@ -427,13 +751,13 @@ function renderLoopFields(){
     ? (S.b - S.a).toFixed(2) + 's' : '—';
 }
 function setA(t){
-  S.a = clamp(t == null ? media.currentTime : t, 0, S.duration);
+  S.a = clamp(t == null ? src.currentTime : t, 0, S.duration);
   if (S.b != null && S.b <= S.a) S.b = Math.min(S.duration, S.a + 1);
   S.reps = 0; el.reps.textContent = '0';
   renderLoopFields(); persist(); draw();
 }
 function setB(t){
-  S.b = clamp(t == null ? media.currentTime : t, 0, S.duration);
+  S.b = clamp(t == null ? src.currentTime : t, 0, S.duration);
   if (S.a != null && S.a >= S.b) S.a = Math.max(0, S.b - 1);
   S.reps = 0; el.reps.textContent = '0';
   renderLoopFields(); persist(); draw();
@@ -523,7 +847,8 @@ function persist(){
   if (!S.key) return;
   try {
     localStorage.setItem(S.key, JSON.stringify({
-      name: S.file ? S.file.name : '',
+      kind: src ? src.kind : 'file',
+      name: S.title || '',
       loops: S.loops,
       a: S.a, b: S.b,
       speed: +el.speed.value, pitch: el.pitch.checked,
@@ -532,7 +857,7 @@ function persist(){
         on: el.rampOn.checked, start: +el.rampStart.value, step: +el.rampStep.value,
         every: +el.rampEvery.value, max: +el.rampMax.value,
       },
-      t: media.currentTime,
+      t: src.currentTime,
       saved: Date.now(),
     }));
   } catch (e) { /* storage full or blocked */ }
@@ -544,7 +869,7 @@ function restoreDoc(){
   S.loops = Array.isArray(d.loops) ? d.loops : [];
   S.a = typeof d.a === 'number' ? d.a : null;
   S.b = typeof d.b === 'number' ? d.b : null;
-  if (typeof d.pitch === 'boolean') el.pitch.checked = d.pitch;
+  if (typeof d.pitch === 'boolean' && !el.pitch.disabled) el.pitch.checked = d.pitch;
   if (typeof d.speed === 'number') applySpeed(d.speed);
   if (typeof d.loopOn === 'boolean') el.loopOn.checked = d.loopOn;
   if (typeof d.rest === 'number') el.rest.value = d.rest;
@@ -555,7 +880,7 @@ function restoreDoc(){
     el.rampEvery.value = d.ramp.every != null ? d.ramp.every : 3;
     el.rampMax.value   = d.ramp.max   != null ? d.ramp.max   : 100;
   }
-  if (typeof d.t === 'number' && d.t < S.duration - 0.5) media.currentTime = d.t;
+  if (typeof d.t === 'number' && d.t < S.duration - 0.5) src.currentTime = d.t;
   renderLoops(); renderLoopFields();
 }
 /* one-time: carry sections saved under the old app name over to the new prefix */
@@ -610,6 +935,17 @@ $('#dzOpen').onclick = () => el.fileInput.click();
 el.fileInput.onchange = e => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ''; };
 el.decodeBtn.onclick = decodeWaveform;
 
+/* YouTube: the bar input, a dropped link, or a link pasted anywhere on the page */
+const submitUrl = () => { const v = el.urlInput.value.trim(); if (v) loadYouTube(v); };
+$('#urlBtn').onclick = submitUrl;
+el.urlInput.onkeydown = e => { if (e.key === 'Enter'){ e.preventDefault(); submitUrl(); } };
+window.addEventListener('paste', e => {
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea') return;
+  const text = e.clipboardData && e.clipboardData.getData('text');
+  if (text && parseYouTube(text)){ e.preventDefault(); el.urlInput.value = text.trim(); loadYouTube(text); }
+});
+
 el.playBtn.onclick = togglePlay;
 $('#toStartBtn').onclick = () => { if (S.a != null){ stopRest(); seek(S.a); } };
 media.addEventListener('click', togglePlay);
@@ -620,7 +956,7 @@ document.querySelectorAll('[data-speed]').forEach(b => {
   b.onclick = () => { applySpeed(+b.dataset.speed); persist(); };
 });
 el.pitch.onchange = () => { applySpeed(+el.speed.value); persist(); };
-el.volume.oninput = () => { media.volume = +el.volume.value / 100; };
+el.volume.oninput = () => { src.volume = +el.volume.value / 100; };
 
 $('#setA').onclick = () => setA();
 $('#setB').onclick = () => setB();
@@ -660,7 +996,9 @@ window.addEventListener('dragleave', () => {
 window.addEventListener('drop', e => {
   e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
   const f = e.dataTransfer.files[0];
-  if (f) loadFile(f);
+  if (f){ loadFile(f); return; }
+  const text = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+  if (text && parseYouTube(text)){ el.urlInput.value = text.trim(); loadYouTube(text); }
 });
 
 /* keyboard */
@@ -679,19 +1017,19 @@ window.addEventListener('keydown', e => {
     case 'c': case 'C': clearLoop(); break;
     case 'r': case 'R': if (S.a != null){ stopRest(); seek(S.a); } break;
     case 's': case 'S': saveLoop(); break;
-    case 'm': case 'M': media.muted = !media.muted; break;
+    case 'm': case 'M': src.muted = !src.muted; break;
     case 'z': case 'Z': zoomLoop(); break;
     case 'x': case 'X': zoomFull(); break;
     case 'q': case 'Q': nudge('a', -0.1); break;
     case 'w': case 'W': nudge('a',  0.1); break;
     case 'o': case 'O': nudge('b', -0.1); break;
     case 'p': case 'P': nudge('b',  0.1); break;
-    case ',': seek(media.currentTime - FRAME); break;
-    case '.': seek(media.currentTime + FRAME); break;
-    case 'ArrowLeft':  seek(media.currentTime - big); break;
-    case 'ArrowRight': seek(media.currentTime + big); break;
-    case 'ArrowUp':   nudgeSpeed(e.shiftKey ? 1 : 5); break;
-    case 'ArrowDown': nudgeSpeed(e.shiftKey ? -1 : -5); break;
+    case ',': seek(src.currentTime - FRAME); break;
+    case '.': seek(src.currentTime + FRAME); break;
+    case 'ArrowLeft':  seek(src.currentTime - big); break;
+    case 'ArrowRight': seek(src.currentTime + big); break;
+    case 'ArrowUp':   stepSpeed( 1, e.shiftKey); break;
+    case 'ArrowDown': stepSpeed(-1, e.shiftKey); break;
     case '0': applySpeed(100); persist(); break;
     case '?': el.help.hidden = !el.help.hidden; break;
     case 'Escape': el.help.hidden = true; break;
@@ -703,7 +1041,7 @@ window.addEventListener('keydown', e => {
 });
 
 window.addEventListener('beforeunload', persist);
-setInterval(() => { if (S.file) persist(); }, 5000);
+setInterval(() => { if (S.loaded) persist(); }, 5000);
 
 /* support links: shown only once SUPPORT_URL is filled in above */
 if (SUPPORT_URL){
@@ -715,6 +1053,18 @@ if (SUPPORT_URL){
   });
 } else {
   console.info('The Shed: set SUPPORT_URL at the top of app.js to show the "buy me a coffee" links.');
+}
+
+/* analytics: the Google tag is fetched only once GA_MEASUREMENT_ID is filled in above */
+if (GA_MEASUREMENT_ID){
+  const gaScript = document.createElement('script');
+  gaScript.async = true;
+  gaScript.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(GA_MEASUREMENT_ID);
+  document.head.appendChild(gaScript);
+  window.dataLayer = window.dataLayer || [];
+  window.gtag = function(){ window.dataLayer.push(arguments); };
+  gtag('js', new Date());
+  gtag('config', GA_MEASUREMENT_ID);
 }
 
 migrateLegacyKeys();
