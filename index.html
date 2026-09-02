@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Learner</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">Video&nbsp;Learner</div>
+  <div class="filename" id="filename">No file loaded</div>
+  <div class="spacer"></div>
+  <a class="btn coffee" data-support hidden target="_blank" rel="noopener noreferrer">☕ Buy me a coffee</a>
+  <button class="btn" id="openBtn">Open file…</button>
+  <button class="btn ghost" id="helpBtn" title="Keyboard shortcuts (?)">?</button>
+  <input type="file" id="fileInput" accept="audio/*,video/*,.mp3,.m4a,.wav,.flac,.ogg,.opus,.aac,.mp4,.mov,.webm,.mkv,.m4v" hidden>
+</header>
+
+<main id="main">
+
+  <section class="stage" id="stage">
+    <video id="media" playsinline></video>
+    <div class="audio-card" id="audioCard">
+      <div class="audio-title" id="audioTitle">—</div>
+      <div class="audio-time" id="audioTime">0:00.000</div>
+    </div>
+    <div class="dropzone" id="dropzone">
+      <div class="dz-inner">
+        <div class="dz-big">Drop an audio or video file here</div>
+        <div class="dz-sub">or <button class="btn" id="dzOpen">choose a file</button></div>
+        <div class="dz-note">Everything stays on your machine — nothing is uploaded.</div>
+        <div class="dz-note dz-support" hidden>Free, no account, no ads. If it helps your practice,
+          <a data-support target="_blank" rel="noopener noreferrer">buy me a coffee ☕</a></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="wavewrap">
+    <canvas id="wave"></canvas>
+    <div class="wavestatus" id="waveStatus"></div>
+    <button class="btn tiny decode" id="decodeBtn" hidden>Generate waveform</button>
+  </section>
+
+  <section class="transport">
+    <button class="btn play" id="playBtn" title="Play / Pause (Space)">▶</button>
+    <button class="btn" id="toStartBtn" title="Jump to loop start (R)">⟲ A</button>
+    <div class="timeread"><span id="curTime">0:00.000</span> <span class="dim">/</span> <span id="durTime">0:00.000</span></div>
+
+    <div class="group">
+      <label class="lbl">Speed</label>
+      <input type="range" id="speed" min="20" max="200" step="1" value="100">
+      <output id="speedOut">100%</output>
+      <div class="presets">
+        <button class="btn tiny" data-speed="50">50</button>
+        <button class="btn tiny" data-speed="65">65</button>
+        <button class="btn tiny" data-speed="75">75</button>
+        <button class="btn tiny" data-speed="85">85</button>
+        <button class="btn tiny" data-speed="100">100</button>
+      </div>
+      <label class="check" title="Keep the original pitch when slowing down"><input type="checkbox" id="pitch" checked> keep pitch</label>
+    </div>
+
+    <div class="group">
+      <label class="lbl">Vol</label>
+      <input type="range" id="volume" min="0" max="100" step="1" value="100" class="short">
+    </div>
+
+    <div class="spacer"></div>
+
+    <div class="group">
+      <button class="btn tiny" id="zoomLoop" title="Zoom to loop (Z)">Zoom loop</button>
+      <button class="btn tiny" id="zoomOut" title="Zoom out full (X)">Full</button>
+    </div>
+  </section>
+
+  <section class="panels">
+
+    <div class="panel">
+      <h3>Loop</h3>
+      <div class="row">
+        <button class="btn" id="setA" title="Set A at playhead (A)">Set A</button>
+        <span class="mono" id="aTime">—</span>
+        <span class="nudge">
+          <button class="btn tiny" data-nudge="a" data-amt="-0.1">−</button>
+          <button class="btn tiny" data-nudge="a" data-amt="0.1">+</button>
+        </span>
+      </div>
+      <div class="row">
+        <button class="btn" id="setB" title="Set B at playhead (B)">Set B</button>
+        <span class="mono" id="bTime">—</span>
+        <span class="nudge">
+          <button class="btn tiny" data-nudge="b" data-amt="-0.1">−</button>
+          <button class="btn tiny" data-nudge="b" data-amt="0.1">+</button>
+        </span>
+      </div>
+      <div class="row">
+        <span class="dim">Length</span> <span class="mono" id="loopLen">—</span>
+      </div>
+      <div class="row">
+        <label class="check big"><input type="checkbox" id="loopOn" checked> Loop A → B <span class="key">L</span></label>
+      </div>
+      <div class="row">
+        <button class="btn ghost" id="clearLoop" title="Clear loop (C)">Clear</button>
+        <button class="btn" id="saveLoop" title="Save this section (S)">Save section</button>
+      </div>
+      <div class="row hint">Drag on the waveform to set a section. Click to seek. Scroll to zoom.</div>
+    </div>
+
+    <div class="panel">
+      <h3>Practice</h3>
+      <div class="row">
+        <span class="dim">Reps</span>
+        <span class="reps" id="reps">0</span>
+        <button class="btn tiny ghost" id="resetReps">reset</button>
+      </div>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="rampOn"> Speed ramp</label>
+      </div>
+      <div class="row sub">
+        start <input type="number" id="rampStart" value="60" min="20" max="200" step="5" class="num">%
+        &nbsp;+<input type="number" id="rampStep" value="5" min="1" max="50" step="1" class="num">%
+        every <input type="number" id="rampEvery" value="3" min="1" max="20" step="1" class="num"> reps
+      </div>
+      <div class="row sub">
+        up to <input type="number" id="rampMax" value="100" min="20" max="200" step="5" class="num">%
+      </div>
+      <div class="row">
+        <label class="lbl">Rest between reps</label>
+        <input type="number" id="rest" value="0" min="0" max="10" step="0.5" class="num">s
+      </div>
+      <div class="row hint">Ramp raises the speed automatically as you repeat the section.</div>
+    </div>
+
+    <div class="panel wide">
+      <h3>Saved sections <span class="dim" id="loopCount"></span></h3>
+      <ul class="loops" id="loopList"></ul>
+      <div class="row">
+        <button class="btn tiny ghost" id="exportBtn">Export…</button>
+        <button class="btn tiny ghost" id="importBtn">Import…</button>
+        <input type="file" id="importInput" accept="application/json,.json" hidden>
+      </div>
+      <div class="row hint">Sections are saved in this browser, per file.</div>
+    </div>
+
+  </section>
+</main>
+
+<div class="modal" id="help" hidden>
+  <div class="modal-card">
+    <h2>Keyboard shortcuts</h2>
+    <div class="keys">
+      <div><span class="key">Space</span> play / pause</div>
+      <div><span class="key">A</span> / <span class="key">B</span> set loop start / end</div>
+      <div><span class="key">L</span> toggle looping</div>
+      <div><span class="key">C</span> clear loop</div>
+      <div><span class="key">R</span> jump to loop start</div>
+      <div><span class="key">S</span> save current section</div>
+      <div><span class="key">←</span> <span class="key">→</span> seek 5s <span class="dim">(shift: 1s, alt: 0.1s)</span></div>
+      <div><span class="key">,</span> <span class="key">.</span> step one frame</div>
+      <div><span class="key">↑</span> <span class="key">↓</span> speed ±5% <span class="dim">(shift: ±1%)</span></div>
+      <div><span class="key">0</span> speed back to 100%</div>
+      <div><span class="key">Q</span> <span class="key">W</span> nudge A ∓0.1s</div>
+      <div><span class="key">O</span> <span class="key">P</span> nudge B ∓0.1s</div>
+      <div><span class="key">Z</span> zoom to loop &nbsp; <span class="key">X</span> zoom out</div>
+      <div><span class="key">M</span> mute</div>
+      <div><span class="key">1</span>–<span class="key">9</span> recall saved section</div>
+      <div><span class="key">?</span> this help</div>
+    </div>
+    <button class="btn" id="helpClose">Close</button>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
