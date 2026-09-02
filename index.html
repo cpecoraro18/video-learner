@@ -3,9 +3,55 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>The Shed</title>
+<title>The Shed — Slow Down Music and Loop It to Practice by Ear</title>
+<meta name="description" content="Free browser tool for learning music by ear. Slow any audio, video or YouTube track to 20% speed without changing its pitch, set an A–B loop, and drill it.">
+<link rel="canonical" href="https://shed.chrispecmusic.com/">
+<meta name="theme-color" content="#0e1116">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="styles.css">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="The Shed">
+<meta property="og:url" content="https://shed.chrispecmusic.com/">
+<meta property="og:title" content="The Shed — Slow Down Music and Loop It to Practice by Ear">
+<meta property="og:description" content="Slow any audio, video or YouTube track down without changing its pitch, loop a section, and practice it until it sticks. Free, no account, nothing uploaded.">
+<meta property="og:image" content="https://shed.chrispecmusic.com/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The Shed — slow music down, loop it, learn it by ear.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The Shed — Slow Down Music and Loop It to Practice by Ear">
+<meta name="twitter:description" content="Slow any audio, video or YouTube track down without changing its pitch, loop a section, and practice it until it sticks.">
+<meta name="twitter:image" content="https://shed.chrispecmusic.com/og.png">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  "name": "The Shed",
+  "url": "https://shed.chrispecmusic.com/",
+  "applicationCategory": "MultimediaApplication",
+  "applicationSubCategory": "Music practice tool",
+  "operatingSystem": "Any modern browser (Chrome, Edge, Firefox, Safari)",
+  "browserRequirements": "Requires JavaScript",
+  "description": "A practice tool for learning parts of audio and video recordings by ear: slow a passage down without changing its pitch, loop it, and drill it until it sticks. Works on your own files or on a YouTube video.",
+  "inLanguage": "en",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "featureList": [
+    "Slow playback from 20% to 200% while keeping the original pitch",
+    "A–B loop any section of a track and repeat it",
+    "Waveform display with click-to-seek, zoom and pan",
+    "Save named sections per file or per YouTube video",
+    "Rep counter, automatic speed ramp and rest between repetitions",
+    "Works with local audio and video files — nothing is uploaded",
+    "Works with YouTube links through the embedded player",
+    "Keyboard shortcuts for every control",
+    "Export and import saved sections as JSON"
+  ],
+  "license": "https://opensource.org/licenses/MIT"
+}
+</script>
 
 <!-- Google tag (gtag.js) -->
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-Y23PCV768S"></script>
@@ -44,11 +90,18 @@
     </div>
     <div class="dropzone" id="dropzone">
       <div class="dz-inner">
+        <h1 class="dz-h1">Slow music down and loop it until you can play it</h1>
+        <p class="dz-tag">The Shed is a free practice tool for learning a passage by ear. Drop in your own
+          audio or video, or paste a YouTube link, then slow it to half speed without changing the key,
+          mark an A&ndash;B loop, and drill it.</p>
         <div class="dz-big">Drop an audio or video file here</div>
         <div class="dz-sub">or <button class="btn" id="dzOpen">choose a file</button>,
           or paste a YouTube link in the bar above</div>
         <div class="dz-note">Local files stay on your machine — nothing is uploaded.
           A YouTube link plays through YouTube&rsquo;s own embedded player.</div>
+        <p class="dz-more">Pitch-preserving speed control from 20% to 200% &middot; A&ndash;B looping on a
+          zoomable waveform &middot; named sections saved per file or per video &middot; rep counter and an
+          automatic speed ramp that works you back up to tempo. No install, no account, no ads.</p>
         <div class="dz-err" id="loadMsg" hidden></div>
         <div class="dz-note dz-support" hidden>Free, no account, no ads. If it helps your practice,
           <a data-support target="_blank" rel="noopener noreferrer">buy me a coffee ☕</a></div>
