@@ -171,6 +171,10 @@
       </div>
       <div class="row">
         <span class="dim">Length</span> <span class="mono" id="loopLen">—</span>
+        <span class="nudge">
+          <button class="btn tiny" id="prevSection" disabled title="Move the section back one length ([)">◀ Prev</button>
+          <button class="btn tiny" id="nextSection" disabled title="Move the section on one length (])">Next ▶</button>
+        </span>
       </div>
       <div class="row">
         <label class="check big"><input type="checkbox" id="loopOn" checked> Loop A → B <span class="key">L</span></label>
@@ -179,7 +183,8 @@
         <button class="btn ghost" id="clearLoop" title="Clear loop (C)">Clear</button>
         <button class="btn" id="saveLoop" title="Save this section (S)">Save section</button>
       </div>
-      <div class="row hint">Drag on the waveform to set a section. Click to seek. Scroll to zoom.</div>
+      <div class="row hint">Drag on the waveform to set a section. Click to seek. Scroll to zoom.
+        <strong>Next</strong> moves the section on by its own length, for working through a piece a bar at a time.</div>
     </div>
 
     <div class="panel">
@@ -230,6 +235,7 @@
       <div><span class="key">L</span> toggle looping</div>
       <div><span class="key">C</span> clear loop</div>
       <div><span class="key">R</span> jump to loop start</div>
+      <div><span class="key">[</span> <span class="key">]</span> move the section back / on one length <span class="dim">(also <span class="key">N</span>)</span></div>
       <div><span class="key">S</span> save current section</div>
       <div><span class="key">←</span> <span class="key">→</span> seek 5s <span class="dim">(shift: 1s, alt: 0.1s)</span></div>
       <div><span class="key">,</span> <span class="key">.</span> step one frame</div>

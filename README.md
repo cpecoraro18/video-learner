@@ -36,6 +36,11 @@ fly while it plays. Drag the A/B markers to adjust, or nudge them in 0.1s steps 
 `−`/`+` buttons (`Q`/`W` for A, `O`/`P` for B). Click anywhere on the waveform to seek;
 scroll to zoom in on it, shift-scroll to pan.
 
+**Work through a piece** — once a section is learned, **Next ▶** (`]` or `N`) moves the
+whole A→B window on by its own length, so the next passage of the same size is already
+looping; **◀ Prev** (`[`) steps it back. Handy for drilling a solo bar by bar. The window
+keeps its length and stops at either end of the recording.
+
 **Save sections** — name a section and it's stored: for a file, against its name and size;
 for a YouTube video, against its video id. Open the same thing later and your sections,
 speed and last position come back with it. Keys `1`–`9` recall the first nine.

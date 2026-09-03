@@ -31,6 +31,7 @@ const el = {
   playBtn:$('#playBtn'), curTime:$('#curTime'), durTime:$('#durTime'),
   speed:$('#speed'), speedOut:$('#speedOut'), pitch:$('#pitch'), volume:$('#volume'),
   aTime:$('#aTime'), bTime:$('#bTime'), loopLen:$('#loopLen'), loopOn:$('#loopOn'),
+  prevSection:$('#prevSection'), nextSection:$('#nextSection'),
   reps:$('#reps'), rampOn:$('#rampOn'), rampStart:$('#rampStart'), rampStep:$('#rampStep'),
   rampEvery:$('#rampEvery'), rampMax:$('#rampMax'), rest:$('#rest'),
   loopList:$('#loopList'), loopCount:$('#loopCount'), help:$('#help'),
@@ -525,6 +526,15 @@ function zoomLoop(){
   const pad = (S.b - S.a) * 0.25;
   setView(S.a - pad, (S.b - S.a) + pad * 2);
 }
+/* after the window moves, bring it back into view without discarding a zoom
+   level the user chose - only fall back to zoomLoop when it no longer fits */
+function keepLoopVisible(){
+  if (S.a == null || S.b == null || S.b <= S.a) return;
+  if (S.a >= S.viewStart && S.b <= S.viewStart + S.viewSpan) return;
+  const len = S.b - S.a;
+  if (len * 1.5 <= S.viewSpan) setView(S.a - (S.viewSpan - len) / 2, S.viewSpan);
+  else zoomLoop();
+}
 function keepPlayheadVisible(t){
   if (t == null) t = src.currentTime;
   if (t < S.viewStart || t > S.viewStart + S.viewSpan) setView(t - S.viewSpan / 2, S.viewSpan);
@@ -749,6 +759,8 @@ function renderLoopFields(){
   el.bTime.textContent = S.b != null ? fmt(S.b) : '—';
   el.loopLen.textContent = (S.a != null && S.b != null && S.b > S.a)
     ? (S.b - S.a).toFixed(2) + 's' : '—';
+  el.prevSection.disabled = !canShift(-1);
+  el.nextSection.disabled = !canShift(1);
 }
 function setA(t){
   S.a = clamp(t == null ? src.currentTime : t, 0, S.duration);
@@ -770,6 +782,30 @@ function clearLoop(){
 function nudge(which, amt){
   if (which === 'a' && S.a != null) setA(S.a + amt);
   if (which === 'b' && S.b != null) setB(S.b + amt);
+}
+/* Move the whole A-B window along by its own length, so once a passage is
+   learned the next one of the same size is a single click away. The window
+   keeps its length at the edges of the media - it stops rather than shrinking. */
+function shiftSection(dir){
+  if (S.a == null || S.b == null || S.b <= S.a) return;
+  const len = S.b - S.a;
+  const a = clamp(S.a + dir * len, 0, Math.max(0, S.duration - len));
+  if (Math.abs(a - S.a) < 1e-4) return;      // already up against the start or the end
+  S.a = a; S.b = Math.min(S.duration, a + len);
+  S.activeLoop = null; S.reps = 0;
+  el.reps.textContent = '0';
+  stopRest();
+  seek(S.a);
+  // the seek is asynchronous on YouTube: latch until the playhead has actually
+  // landed, or the frames still sitting past the new B count as a rep
+  S.wrapping = true; S.wrapAt = Date.now();
+  keepLoopVisible();
+  renderLoopFields(); renderLoops(); persist(); draw();
+}
+function canShift(dir){
+  if (S.a == null || S.b == null || S.b <= S.a) return false;
+  const len = S.b - S.a;
+  return Math.abs(clamp(S.a + dir * len, 0, Math.max(0, S.duration - len)) - S.a) > 1e-4;
 }
 
 /* ---------- saved sections ---------- */
@@ -960,6 +996,8 @@ el.volume.oninput = () => { src.volume = +el.volume.value / 100; };
 
 $('#setA').onclick = () => setA();
 $('#setB').onclick = () => setB();
+$('#prevSection').onclick = () => shiftSection(-1);
+$('#nextSection').onclick = () => shiftSection(1);
 $('#clearLoop').onclick = clearLoop;
 $('#saveLoop').onclick = saveLoop;
 document.querySelectorAll('[data-nudge]').forEach(b => {
@@ -1024,6 +1062,8 @@ window.addEventListener('keydown', e => {
     case 'w': case 'W': nudge('a',  0.1); break;
     case 'o': case 'O': nudge('b', -0.1); break;
     case 'p': case 'P': nudge('b',  0.1); break;
+    case '[': shiftSection(-1); break;
+    case ']': case 'n': case 'N': shiftSection(1); break;
     case ',': seek(src.currentTime - FRAME); break;
     case '.': seek(src.currentTime + FRAME); break;
     case 'ArrowLeft':  seek(src.currentTime - big); break;
@@ -1071,5 +1111,5 @@ migrateLegacyKeys();
 renderLoops(); renderLoopFields(); draw();
 
 /* debug handle (console: SHED.state, SHED.loadFile(file), ...) */
-window.SHED = { state:S, media, loadFile, setA, setB, applySpeed, recallLoop, saveLoop, zoomLoop, zoomFull };
+window.SHED = { state:S, media, loadFile, setA, setB, applySpeed, recallLoop, saveLoop, shiftSection, zoomLoop, zoomFull };
 })();
